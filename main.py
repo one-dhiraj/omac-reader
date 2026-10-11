@@ -1,4 +1,3 @@
-
 import sys
 from pathlib import Path
 
@@ -27,6 +26,7 @@ class MainWindow(QMainWindow):
 
         self.current_file = None
         self.comic_pages = []
+        self.has_unsaved_changes = False
 
         self.create_actions()
         self.create_views()
@@ -34,7 +34,6 @@ class MainWindow(QMainWindow):
         self.create_menu()
 
         self.statusBar().showMessage("Ready")
-
     
     def create_navigation_shortcuts(self):
         shortcuts = [
@@ -141,26 +140,33 @@ class MainWindow(QMainWindow):
         if not file_path:
             return
 
+        # Load first, so an invalid archive cannot replace the current comic.
         try:
             loaded_pages = load_cbz(file_path)
         except (OSError, ValueError) as exc:
             QMessageBox.critical(
-                self, "Unable to open comic", str(exc)
+                self,
+                "Unable to open comic",
+                str(exc),
             )
             return
 
+        # Protect edits to the currently open comic.
+        if not self.confirm_unsaved_changes():
+            return
+
         self.current_file = file_path
-        self.save_as_action.setEnabled(True)
         self.comic_pages = loaded_pages
+        self.has_unsaved_changes = False
+
+        self.save_as_action.setEnabled(True)
 
         self.reader.set_pages(self.comic_pages)
         self.editor.set_pages(self.comic_pages)
 
-        self.setWindowTitle(
-            f"OMAC Reader — {Path(file_path).name}"
-        )
-
+        self.set_unsaved_changes(False)
         self.switch_mode(0)
+
         self.statusBar().showMessage(
             f"Loaded {len(self.comic_pages)} pages"
         )
@@ -186,6 +192,42 @@ class MainWindow(QMainWindow):
             f"{len(self.comic_pages)} pages — order updated"
         )
 
+        self.set_unsaved_changes(True)
+
+    def set_unsaved_changes(self, unsaved):
+        self.has_unsaved_changes = unsaved
+
+        filename = (
+            Path(self.current_file).name
+            if self.current_file
+            else "Untitled"
+        )
+
+        marker = " *" if unsaved else ""
+        self.setWindowTitle(f"OMAC Reader — {filename}{marker}")
+
+    def confirm_unsaved_changes(self):
+        if not self.has_unsaved_changes:
+            return True
+
+        choice = QMessageBox.question(
+            self,
+            "Unsaved Changes",
+            "You have unsaved changes. Do you want to save them?",
+            QMessageBox.StandardButton.Save
+            | QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Save,
+        )
+
+        if choice == QMessageBox.StandardButton.Save:
+            return self.save_comic_as()
+
+        if choice == QMessageBox.StandardButton.Discard:
+            return True
+
+        return False
+    
     def save_comic_as(self):
         if not self.comic_pages:
             QMessageBox.warning(
@@ -193,7 +235,7 @@ class MainWindow(QMainWindow):
                 "Nothing to Save",
                 "Open a comic before saving.",
             )
-            return
+            return False
 
         if self.current_file:
             default_name = (
@@ -210,9 +252,8 @@ class MainWindow(QMainWindow):
         )
 
         if not file_path:
-            return
+            return False
 
-        # Ensure the output has a .cbz extension.
         if Path(file_path).suffix.lower() != ".cbz":
             file_path += ".cbz"
 
@@ -224,20 +265,23 @@ class MainWindow(QMainWindow):
                 "Unable to Save Comic",
                 f"The comic could not be saved:\n{exc}",
             )
-            return
+            return False
 
         self.current_file = file_path
-
-        self.setWindowTitle(
-            f"OMAC Reader — {Path(file_path).name}"
-        )
+        self.set_unsaved_changes(False)
 
         self.statusBar().showMessage(
             f"Saved {len(self.comic_pages)} pages to "
             f"{Path(file_path).name}"
         )
 
+        return True
 
+    def closeEvent(self, event):
+        if self.confirm_unsaved_changes():
+            event.accept()
+        else:
+            event.ignore()
 
 def main():
     app = QApplication(sys.argv)
