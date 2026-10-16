@@ -26,7 +26,7 @@ def natural_sort_key(path):
 
 def load_cbz(file_path):
     """
-    Load image pages while retaining their original image bytes.
+    Load page metadata without decoding or retaining image data.
     """
     comic_path = Path(file_path)
     pages = []
@@ -43,16 +43,11 @@ def load_cbz(file_path):
             image_names.sort(key=natural_sort_key)
 
             for name in image_names:
-                image_data = archive.read(name)
-
-                with Image.open(BytesIO(image_data)) as image:
-                    image.load()
-
-                    pages.append({
-                        "name": Path(name).name,
-                        "image": image.convert("RGB").copy(),
-                        "data": image_data,
-                    })
+                pages.append({
+                    "name": Path(name).name,
+                    "source_path": str(comic_path.resolve()),
+                    "archive_name": name,
+                })
 
     except BadZipFile as exc:
         raise ValueError(
@@ -67,10 +62,53 @@ def load_cbz(file_path):
     return pages
 
 
+def load_page_data(page):
+    """
+    Read the original image bytes for one page only.
+    """
+    if "data" in page:
+        return page["data"]
+
+    with ZipFile(page["source_path"], "r") as archive:
+        return archive.read(page["archive_name"])
+
+
+def load_page_image(page):
+    """
+    Decode one page into a PIL image.
+    """
+    if "image" in page:
+        return page["image"]
+
+    image_data = load_page_data(page)
+
+    with Image.open(BytesIO(image_data)) as source:
+        source.load()
+        return source.convert("RGBA" if "A" in source.getbands() else "RGB")
+
+
+def load_page_thumbnail(page, size=(120, 160)):
+    """
+    Create a small thumbnail without converting the full-resolution
+    page into a Qt image first.
+    """
+    if "image" in page:
+        image = page["image"].copy()
+        image.thumbnail(size, Image.Resampling.LANCZOS)
+        return image
+
+    image_data = load_page_data(page)
+
+    with Image.open(BytesIO(image_data)) as source:
+        source.thumbnail(size, Image.Resampling.LANCZOS)
+        return source.convert(
+            "RGBA" if "A" in source.getbands() else "RGB"
+        )
+
 def save_cbz(file_path, pages):
     """
-    Save pages in their current order without re-encoding
-    images whose original bytes are available.
+    Save pages in their current order, reading original bytes
+    one page at a time without re-encoding unchanged images.
     """
     if not pages:
         raise ValueError("Cannot save a comic with no pages.")
@@ -81,26 +119,15 @@ def save_cbz(file_path, pages):
         compression=ZIP_DEFLATED,
     ) as archive:
         for index, page in enumerate(pages, start=1):
-            image_data = page.get("data")
+            image_data = load_page_data(page)
 
-            if image_data is None:
-                # Fallback for pages without retained original bytes.
-                image_buffer = BytesIO()
-                page["image"].save(image_buffer, format="PNG")
-                image_data = image_buffer.getvalue()
+            extension = Path(page["name"]).suffix.lower()
+
+            if extension not in SUPPORTED_IMAGES:
                 extension = ".png"
-            else:
-                extension = Path(page["name"]).suffix.lower()
 
-                if extension not in SUPPORTED_IMAGES:
-                    extension = ".png"
-
-            archive_name = f"{index:04d}{extension}"
-
-            # Image formats such as JPEG and WebP are already compressed.
-            # Store their bytes directly instead of compressing them again.
             archive.writestr(
-                archive_name,
+                f"{index:04d}{extension}",
                 image_data,
                 compress_type=ZIP_STORED,
             )

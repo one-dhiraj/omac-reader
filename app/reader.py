@@ -1,3 +1,6 @@
+
+from zipfile import BadZipFile
+
 from PIL.ImageQt import ImageQt
 
 from PySide6.QtCore import Qt, QSize
@@ -9,6 +12,8 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QVBoxLayout,
 )
+
+from app.archive import load_page_image
 
 
 class ComicReader(QWidget):
@@ -87,8 +92,17 @@ class ComicReader(QWidget):
             return
 
         page = self.current_page()
-        image = ImageQt(page["image"])
-        pixmap = QPixmap.fromImage(image)
+
+        try:
+            image = load_page_image(page)
+            pixmap = QPixmap.fromImage(ImageQt(image))
+        except (OSError, ValueError, KeyError, TypeError, BadZipFile):
+            self.image_label.setPixmap(QPixmap())
+            self.image_label.setText(
+                f"Unable to load page:\n{page['name']}"
+            )
+            self._update_navigation()
+            return
 
         self.image_label.setPixmap(
             pixmap.scaled(

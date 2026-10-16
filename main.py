@@ -27,6 +27,7 @@ class MainWindow(QMainWindow):
         self.current_file = None
         self.comic_pages = []
         self.has_unsaved_changes = False
+        self.editor_loaded = False
 
         self.create_actions()
         self.create_views()
@@ -118,7 +119,7 @@ class MainWindow(QMainWindow):
         view_menu = self.menuBar().addMenu("View")
         view_menu.addAction(self.reader_action)
         view_menu.addAction(self.editor_action)
-
+    
     def switch_mode(self, index):
         self.pages_view.setCurrentIndex(index)
 
@@ -128,6 +129,10 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(
             "Reader mode" if index == 0 else "Page editor mode"
         )
+
+        if index == 1 and not self.editor_loaded:
+            self.editor.set_pages(self.comic_pages)
+            self.editor_loaded = True
 
     def open_comic(self):
         file_path, _ = QFileDialog.getOpenFileName(
@@ -162,7 +167,9 @@ class MainWindow(QMainWindow):
         self.save_as_action.setEnabled(True)
 
         self.reader.set_pages(self.comic_pages)
-        self.editor.set_pages(self.comic_pages)
+        self.editor.pages = self.comic_pages
+        self.editor_loaded = False
+        self.editor.page_grid.clear()
 
         self.set_unsaved_changes(False)
         self.switch_mode(0)

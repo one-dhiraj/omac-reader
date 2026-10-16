@@ -15,11 +15,14 @@ from PySide6.QtWidgets import (
     QPushButton,
     QMessageBox,
     QFileDialog,
+    QApplication, QProgressDialog
 )
 
 from pathlib import Path
 from PIL import Image
-from PIL.ImageQt import ImageQt
+
+from app.archive import load_page_thumbnail
+from app.archive import load_page_image
 
 class ReorderableListWidget(QListWidget):
     items_reordered = Signal()
@@ -112,6 +115,7 @@ class PageEditor(QWidget):
         super().__init__(parent)
 
         self.pages = []
+        self.thumbnail_cache = {}
 
         title = QLabel("Page Editor")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -149,43 +153,102 @@ class PageEditor(QWidget):
 
     def set_pages(self, pages):
         self.pages = pages
+        self.thumbnail_cache.clear()
         self.refresh_page_grid()
+
+    def _create_page_item(self, page, index):
+        page_id = id(page)
+
+        if page_id not in self.thumbnail_cache:
+            image = load_page_thumbnail(page)
+            pixmap = QPixmap.fromImage(ImageQt(image))
+            self.thumbnail_cache[page_id] = QIcon(pixmap)
+
+        item = QListWidgetItem(
+            self.thumbnail_cache[page_id],
+            f"Page {index + 1}\n{page['name']}",
+        )
+
+        item.setData(Qt.ItemDataRole.UserRole, page)
+        item.setTextAlignment(Qt.AlignmentFlag.AlignHCenter)
+
+        return item
+
+
+    def _update_page_labels(self):
+        for index in range(self.page_grid.count()):
+            page = self.page_grid.item(index).data(
+                Qt.ItemDataRole.UserRole
+            )
+
+            self.page_grid.item(index).setText(
+                f"Page {index + 1}\n{page['name']}"
+            )
+
 
     def refresh_page_grid(self):
         self.page_grid.clear()
 
-        for index, page in enumerate(self.pages):
-            pixmap = QPixmap.fromImage(ImageQt(page["image"]))
-
-            thumbnail = pixmap.scaled(
-                QSize(120, 160),
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
-
-            item = QListWidgetItem(
-                QIcon(thumbnail),
-                f"Page {index + 1}\n{page['name']}",
-            )
-
-            item.setData(Qt.ItemDataRole.UserRole, page)
-            item.setTextAlignment(Qt.AlignmentFlag.AlignHCenter)
-
-            self.page_grid.addItem(item)
-
-    
-    def remove_selected_pages(self):
-        selected_items = self.page_grid.selectedItems()
-
-        if not selected_items:
+        if not self.pages:
             return
 
-        selected_pages = [
-            item.data(Qt.ItemDataRole.UserRole)
-            for item in selected_items
-        ]
+        # Only show progress when at least one thumbnail needs generating.
+        missing_thumbnails = any(
+            id(page) not in self.thumbnail_cache
+            for page in self.pages
+        )
 
-        if len(selected_pages) >= len(self.pages):
+        progress = None
+
+        if missing_thumbnails:
+            progress = QProgressDialog(
+                "Preparing page thumbnails...",
+                None,
+                0,
+                len(self.pages),
+                self.window(),
+            )
+            progress.setWindowTitle("Opening Page Editor")
+            progress.setWindowModality(
+                Qt.WindowModality.ApplicationModal
+            )
+            progress.setMinimumDuration(0)
+            progress.setAutoClose(False)
+            progress.setAutoReset(False)
+            progress.show()
+            QApplication.processEvents()
+
+        try:
+            for index, page in enumerate(self.pages):
+                self.page_grid.addItem(
+                    self._create_page_item(page, index)
+                )
+
+                if progress is not None:
+                    progress.setLabelText(
+                        f"Preparing thumbnails: "
+                        f"{index + 1} of {len(self.pages)}"
+                    )
+                    progress.setValue(index + 1)
+                    QApplication.processEvents()
+
+        finally:
+            if progress is not None:
+                progress.close()
+    
+    def remove_selected_pages(self):
+        selected_rows = sorted(
+            {
+                self.page_grid.row(item)
+                for item in self.page_grid.selectedItems()
+            },
+            reverse=True,
+        )
+
+        if not selected_rows:
+            return
+
+        if len(selected_rows) >= len(self.pages):
             QMessageBox.information(
                 self,
                 "Cannot Remove Pages",
@@ -193,10 +256,13 @@ class PageEditor(QWidget):
             )
             return
 
-        for page in selected_pages:
-            self.pages.remove(page)
+        for row in selected_rows:
+            page = self.pages.pop(row)
 
-        self.refresh_page_grid()
+            self.page_grid.takeItem(row)
+            self.thumbnail_cache.pop(id(page), None)
+
+        self._update_page_labels()
         self.pages_reordered.emit(self.pages.copy())
 
     
@@ -247,12 +313,21 @@ class PageEditor(QWidget):
             return
 
         # Append the new pages to the end of the current comic.
+        start_index = len(self.pages)
         self.pages.extend(added_pages)
 
-        # Rebuild thumbnails with the updated page numbering.
-        self.refresh_page_grid()
+        # Generate thumbnails only for the newly added pages.
+        for offset, page in enumerate(added_pages):
+            item = self._create_page_item(
+                page,
+                start_index + offset,
+            )
+            self.page_grid.addItem(item)
 
-        # Notify main.py so the reader receives the new page list.
+        # Refresh numbering, not thumbnails.
+        self._update_page_labels()
+
+        # Notify main.py so the reader receives the updated page list.
         self.pages_reordered.emit(self.pages.copy())
 
         if failed_files:
