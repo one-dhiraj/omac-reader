@@ -10,7 +10,6 @@ from PySide6.QtWidgets import QFileDialog, QMessageBox
 
 from app.editor import PageEditor
 
-
 def make_page(name, color="red"):
     """Create a sample page without needing an image file."""
     image = Image.new("RGB", (10, 10), color=color)
@@ -190,7 +189,7 @@ def test_reorder_pages_emits_updated_page_list(qtbot):
 def test_edit_and_save_comic_preserves_final_order_and_bytes(
     qtbot, tmp_path
 ):
-    from app.archive import load_cbz, save_cbz
+    from app.archive import load_cbz, load_page_data, save_cbz
     from zipfile import ZipFile
 
     source_path = tmp_path / "original.cbz"
@@ -235,5 +234,5 @@ def test_edit_and_save_comic_preserves_final_order_and_bytes(
 
     # The original third page should now be first,
     # followed by the original first page.
-    assert saved_pages[0]["data"] == original_pages[2]["data"]
-    assert saved_pages[1]["data"] == original_pages[0]["data"]
+    assert load_page_data(saved_pages[0]) == original_pages[2]["data"]
+    assert load_page_data(saved_pages[1]) == original_pages[0]["data"]
