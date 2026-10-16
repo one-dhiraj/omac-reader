@@ -3,6 +3,8 @@ from pathlib import Path
 from zipfile import ZipFile, BadZipFile, ZIP_DEFLATED, ZIP_STORED
 from io import BytesIO
 import re
+import os
+import tempfile
 
 from PIL import Image
 
@@ -14,7 +16,8 @@ SUPPORTED_IMAGES = {
     ".bmp",
     ".gif",
 }
-
+class SaveCancelledError(Exception):
+    """Raised when the user cancels a comic save operation."""
 
 def natural_sort_key(path):
     """Sort page1, page2, page10 in human reading order."""
@@ -161,29 +164,73 @@ def load_page_thumbnail(page, size=(120, 160)):
             "RGBA" if "A" in source.getbands() else "RGB"
         )
 
-def save_cbz(file_path, pages):
+
+def save_cbz(file_path, pages, progress_callback=None, cancel_check=None):
     """
-    Save pages in their current order, reading original bytes
-    one page at a time without re-encoding unchanged images.
+    Save pages in their current order to a CBZ file.
+
+    Writes to a temporary file first, replacing the destination
+    only after the archive has been saved successfully.
     """
     if not pages:
         raise ValueError("Cannot save a comic with no pages.")
 
-    with ZipFile(
-        file_path,
-        mode="w",
-        compression=ZIP_DEFLATED,
-    ) as archive:
-        for index, page in enumerate(pages, start=1):
-            image_data = load_page_data(page)
+    destination = Path(file_path)
+    temporary_path = None
 
-            extension = Path(page["name"]).suffix.lower()
+    try:
+        # Create the temporary file in the destination directory
+        # so the final replacement happens on the same filesystem.
+        fd, temporary_name = tempfile.mkstemp(
+            prefix=f".{destination.name}.",
+            suffix=".tmp",
+            dir=destination.parent,
+        )
+        os.close(fd)
+        temporary_path = Path(temporary_name)
 
-            if extension not in SUPPORTED_IMAGES:
-                extension = ".png"
+        with ZipFile(
+            temporary_path,
+            mode="w",
+            compression=ZIP_DEFLATED,
+        ) as archive:
+            total_pages = len(pages)
 
-            archive.writestr(
-                f"{index:04d}{extension}",
-                image_data,
-                compress_type=ZIP_STORED,
-            )
+            for index, page in enumerate(pages, start=1):
+                if cancel_check is not None and cancel_check():
+                    raise SaveCancelledError(
+                        "Saving was cancelled."
+                    )
+
+                image_data = load_page_data(page)
+
+                extension = Path(page["name"]).suffix.lower()
+
+                if extension not in SUPPORTED_IMAGES:
+                    extension = ".png"
+
+                archive.writestr(
+                    f"{index:04d}{extension}",
+                    image_data,
+                    compress_type=ZIP_STORED,
+                )
+
+                if progress_callback is not None:
+                    progress_callback(index, total_pages)
+
+                if cancel_check is not None and cancel_check():
+                    raise SaveCancelledError(
+                        "Saving was cancelled."
+                    )
+
+        # Publish the completed archive only after closing it successfully.
+        os.replace(temporary_path, destination)
+        temporary_path = None
+
+    finally:
+        # Remove incomplete temporary output after cancellation or failure.
+        if temporary_path is not None:
+            try:
+                temporary_path.unlink(missing_ok=True)
+            except OSError:
+                pass

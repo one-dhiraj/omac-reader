@@ -6,13 +6,18 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QMainWindow,
     QMessageBox,
+    QProgressDialog,
     QStackedWidget,
     QToolBar,
 )
 from PySide6.QtGui import QAction
 from PySide6.QtCore import Qt
 
-from app.archive import load_comic, save_cbz
+from app.archive import (
+    load_comic,
+    save_cbz,
+    SaveCancelledError,
+)
 from app.reader import ComicReader
 from app.editor import PageEditor
 
@@ -131,8 +136,13 @@ class MainWindow(QMainWindow):
         )
 
         if index == 1 and not self.editor_loaded:
-            self.editor.set_pages(self.comic_pages)
-            self.editor_loaded = True
+            self.editor_loaded = self.editor.set_pages(self.comic_pages)
+
+            if not self.editor_loaded:
+                self.pages_view.setCurrentIndex(0)
+                self.reader_action.setChecked(True)
+                self.editor_action.setChecked(False)
+                return
 
     def open_comic(self):
         file_path, _ = QFileDialog.getOpenFileName(
@@ -235,6 +245,7 @@ class MainWindow(QMainWindow):
 
         return False
     
+    
     def save_comic_as(self):
         if not self.comic_pages:
             QMessageBox.warning(
@@ -264,15 +275,58 @@ class MainWindow(QMainWindow):
         if Path(file_path).suffix.lower() != ".cbz":
             file_path += ".cbz"
 
+        progress = QProgressDialog(
+            "Preparing to save comic...",
+            "Cancel",
+            0,
+            len(self.comic_pages),
+            self,
+        )
+        progress.setWindowTitle("Saving Comic")
+        progress.setWindowModality(
+            Qt.WindowModality.WindowModal
+        )
+        progress.setMinimumDuration(0)
+        progress.setAutoClose(False)
+        progress.setAutoReset(False)
+
+        def update_progress(current, total):
+            progress.setLabelText(
+                f"Saving page {current} of {total}..."
+            )
+            progress.setValue(current)
+
+        progress.show()
+
         try:
-            save_cbz(file_path, self.comic_pages)
-        except (OSError, ValueError, KeyError, TypeError) as exc:
+            save_cbz(
+                file_path,
+                self.comic_pages,
+                progress_callback=update_progress,
+                cancel_check=progress.wasCanceled,
+            )
+
+        except SaveCancelledError:
+            self.statusBar().showMessage("Saving cancelled")
+
+            QMessageBox.information(
+                self,
+                "Saving Cancelled",
+                "The save operation was cancelled. "
+                "Your unsaved changes have been preserved.",
+            )
+            return False
+
+        except Exception as exc:
             QMessageBox.critical(
                 self,
                 "Unable to Save Comic",
                 f"The comic could not be saved:\n{exc}",
             )
             return False
+
+        finally:
+            progress.close()
 
         self.current_file = file_path
         self.set_unsaved_changes(False)

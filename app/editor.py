@@ -154,7 +154,7 @@ class PageEditor(QWidget):
     def set_pages(self, pages):
         self.pages = pages
         self.thumbnail_cache.clear()
-        self.refresh_page_grid()
+        return self.refresh_page_grid()
 
     def _create_page_item(self, page, index):
         page_id = id(page)
@@ -185,52 +185,64 @@ class PageEditor(QWidget):
                 f"Page {index + 1}\n{page['name']}"
             )
 
-
     def refresh_page_grid(self):
         self.page_grid.clear()
 
         if not self.pages:
-            return
+            return True
 
-        # Only show progress when at least one thumbnail needs generating.
         missing_thumbnails = any(
             id(page) not in self.thumbnail_cache
             for page in self.pages
         )
 
         progress = None
+        items = []
 
         if missing_thumbnails:
             progress = QProgressDialog(
                 "Preparing page thumbnails...",
-                None,
+                "Cancel",
                 0,
                 len(self.pages),
-                self.window(),
+                self,
             )
             progress.setWindowTitle("Opening Page Editor")
             progress.setWindowModality(
-                Qt.WindowModality.ApplicationModal
+                Qt.WindowModality.WindowModal
             )
             progress.setMinimumDuration(0)
             progress.setAutoClose(False)
             progress.setAutoReset(False)
             progress.show()
-            QApplication.processEvents()
 
         try:
             for index, page in enumerate(self.pages):
-                self.page_grid.addItem(
-                    self._create_page_item(page, index)
-                )
-
                 if progress is not None:
+                    if progress.wasCanceled():
+                        self.page_grid.clear()
+                        return False
+
                     progress.setLabelText(
                         f"Preparing thumbnails: "
                         f"{index + 1} of {len(self.pages)}"
                     )
+
+                item = self._create_page_item(page, index)
+                items.append(item)
+
+                if progress is not None:
                     progress.setValue(index + 1)
-                    QApplication.processEvents()
+
+                    if progress.wasCanceled():
+                        self.page_grid.clear()
+                        return False
+
+            # Populate the grid only after all items are prepared.
+            for item in items:
+                self.page_grid.addItem(item)
+
+            return True
 
         finally:
             if progress is not None:
@@ -266,6 +278,7 @@ class PageEditor(QWidget):
         self.pages_reordered.emit(self.pages.copy())
 
     
+    
     def add_pages(self):
         file_paths, _ = QFileDialog.getOpenFileNames(
             self,
@@ -279,30 +292,73 @@ class PageEditor(QWidget):
 
         added_pages = []
         failed_files = []
+        cancelled = False
 
-        for file_path in file_paths:
-            try:
-                image_data = Path(file_path).read_bytes()
+        progress = QProgressDialog(
+            "Preparing selected images...",
+            "Cancel",
+            0,
+            len(file_paths),
+            self,
+        )
+        progress.setWindowTitle("Adding Pages")
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.setAutoClose(False)
+        progress.setAutoReset(False)
 
-                with Image.open(BytesIO(image_data)) as source:
-                    source.load()
+        try:
+            for index, file_path in enumerate(file_paths):
+                if progress.wasCanceled():
+                    cancelled = True
+                    break
 
-                    # Normalize the image mode for reliable display.
-                    if "A" in source.getbands():
-                        image = source.convert("RGBA")
-                    else:
-                        image = source.convert("RGB")
-
-                added_pages.append({
-                    "name": Path(file_path).name,
-                    "image": image,
-                    "data": image_data,
-                })
-
-            except (OSError, ValueError) as exc:
-                failed_files.append(
-                    f"{Path(file_path).name}: {exc}"
+                progress.setLabelText(
+                    f"Preparing image {index + 1} of {len(file_paths)}:\n"
+                    f"{Path(file_path).name}"
                 )
+
+                try:
+                    image_data = Path(file_path).read_bytes()
+
+                    with Image.open(BytesIO(image_data)) as source:
+                        source.load()
+
+                        # Normalize the image mode for reliable display.
+                        if "A" in source.getbands():
+                            image = source.convert("RGBA")
+                        else:
+                            image = source.convert("RGB")
+
+                    added_pages.append({
+                        "name": Path(file_path).name,
+                        "image": image,
+                        "data": image_data,
+                    })
+
+                except (OSError, ValueError) as exc:
+                    failed_files.append(
+                        f"{Path(file_path).name}: {exc}"
+                    )
+
+                progress.setValue(index + 1)
+
+                if progress.wasCanceled():
+                    cancelled = True
+                    break
+
+        finally:
+            progress.close()
+
+        # Do not modify the comic if the user cancels.
+        if cancelled:
+            QMessageBox.information(
+                self,
+                "Adding Pages Cancelled",
+                "The operation was cancelled. "
+                "No selected pages were added.",
+            )
+            return
 
         if not added_pages:
             QMessageBox.warning(
@@ -312,7 +368,7 @@ class PageEditor(QWidget):
             )
             return
 
-        # Append the new pages to the end of the current comic.
+        # Commit the prepared batch only after processing finishes.
         start_index = len(self.pages)
         self.pages.extend(added_pages)
 
@@ -324,10 +380,9 @@ class PageEditor(QWidget):
             )
             self.page_grid.addItem(item)
 
-        # Refresh numbering, not thumbnails.
         self._update_page_labels()
 
-        # Notify main.py so the reader receives the updated page list.
+        # Notify main.py that the page list has changed.
         self.pages_reordered.emit(self.pages.copy())
 
         if failed_files:
@@ -337,6 +392,7 @@ class PageEditor(QWidget):
                 f"Added {len(added_pages)} page(s).\n\n"
                 + "\n".join(failed_files),
             )
+
 
     def _on_rows_moved(self, *args):
         reordered_pages = [
