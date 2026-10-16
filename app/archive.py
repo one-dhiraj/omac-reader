@@ -91,9 +91,48 @@ def load_cbr(file_path):
                     "archive_type": "cbr",
                 })
 
-    except (rarfile.Error, OSError) as exc:
+    except FileNotFoundError as exc:
         raise ValueError(
-            f"Unable to read this CBR archive: {exc}"
+            f"The CBR file could not be found:\n{comic_path}"
+        ) from exc
+
+    except PermissionError as exc:
+        raise ValueError(
+            f"Permission denied while opening the CBR file:\n{comic_path}"
+        ) from exc
+
+    except rarfile.Error as exc:
+        error_name = type(exc).__name__.lower()
+
+        if any(
+            term in error_name
+            for term in ("cannotexec", "noexec", "execerror")
+        ):
+            message = (
+                "A compatible RAR extraction utility is missing "
+                "or could not be executed. Install a supported "
+                "utility, such as unrar or unar."
+            )
+        elif any(
+            term in error_name
+            for term in ("password", "encrypted")
+        ):
+            message = (
+                "This CBR archive may be password-protected. "
+                "Encrypted archives are not currently supported."
+            )
+        else:
+            message = (
+                "Unable to read this CBR archive. It may be corrupted "
+                "or use an unsupported RAR format."
+            )
+
+        raise ValueError(f"{message}\nDetails: {exc}") from exc
+
+    except OSError as exc:
+        raise ValueError(
+            f"Unable to access the CBR file:\n{comic_path}\n"
+            f"Details: {exc}"
         ) from exc
 
     if not pages:
@@ -126,11 +165,40 @@ def load_page_data(page):
     archive_name = page["archive_name"]
 
     if page.get("archive_type", "cbz") == "cbr":
-        with rarfile.RarFile(source_path, "r") as archive:
+        try:
+            with rarfile.RarFile(source_path, "r") as archive:
+                return archive.read(archive_name)
+
+        except (rarfile.Error, OSError) as exc:
+            error_name = type(exc).__name__.lower()
+
+            if any(
+                term in error_name
+                for term in ("cannotexec", "noexec", "execerror")
+            ):
+                message = (
+                    "A compatible RAR extraction utility is missing "
+                    "or could not be executed. Install a supported "
+                    "utility, such as unrar or unar, and try again."
+                )
+            else:
+                message = (
+                    f"Unable to extract page '{Path(archive_name).name}' "
+                    "from the CBR archive. The archive may be corrupted, "
+                    "encrypted, or use an unsupported RAR format."
+                )
+
+            raise ValueError(f"{message}\nDetails: {exc}") from exc
+
+    try:
+        with ZipFile(source_path, "r") as archive:
             return archive.read(archive_name)
 
-    with ZipFile(source_path, "r") as archive:
-        return archive.read(archive_name)
+    except (BadZipFile, OSError, KeyError) as exc:
+        raise ValueError(
+            f"Unable to read page '{Path(archive_name).name}' "
+            f"from the CBZ archive.\nDetails: {exc}"
+        ) from exc
 
 def load_page_image(page):
     """
