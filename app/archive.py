@@ -1,4 +1,4 @@
-
+import rarfile
 from pathlib import Path
 from zipfile import ZipFile, BadZipFile, ZIP_DEFLATED, ZIP_STORED
 from io import BytesIO
@@ -47,6 +47,7 @@ def load_cbz(file_path):
                     "name": Path(name).name,
                     "source_path": str(comic_path.resolve()),
                     "archive_name": name,
+                    "archive_type": "cbz",
                 })
 
     except BadZipFile as exc:
@@ -62,16 +63,71 @@ def load_cbz(file_path):
     return pages
 
 
+def load_cbr(file_path):
+    """Load CBR page metadata without extracting all images."""
+    comic_path = Path(file_path)
+    pages = []
+
+    try:
+        with rarfile.RarFile(comic_path, "r") as archive:
+            image_names = [
+                info.filename
+                for info in archive.infolist()
+                if not info.is_dir()
+                and Path(info.filename).suffix.lower()
+                in SUPPORTED_IMAGES
+            ]
+
+            image_names.sort(key=natural_sort_key)
+
+            for name in image_names:
+                pages.append({
+                    "name": Path(name).name,
+                    "source_path": str(comic_path.resolve()),
+                    "archive_name": name,
+                    "archive_type": "cbr",
+                })
+
+    except (rarfile.Error, OSError) as exc:
+        raise ValueError(
+            f"Unable to read this CBR archive: {exc}"
+        ) from exc
+
+    if not pages:
+        raise ValueError(
+            "No supported image pages were found in this CBR archive."
+        )
+
+    return pages
+
+def load_comic(file_path):
+    """Load page metadata from a supported comic archive."""
+    extension = Path(file_path).suffix.lower()
+
+    if extension == ".cbz":
+        return load_cbz(file_path)
+
+    if extension == ".cbr":
+        return load_cbr(file_path)
+
+    raise ValueError(
+        "Unsupported comic format. Please select a CBZ or CBR file."
+    )
+
 def load_page_data(page):
-    """
-    Read the original image bytes for one page only.
-    """
+    """Read the original image bytes for one page only."""
     if "data" in page:
         return page["data"]
 
-    with ZipFile(page["source_path"], "r") as archive:
-        return archive.read(page["archive_name"])
+    source_path = page["source_path"]
+    archive_name = page["archive_name"]
 
+    if page.get("archive_type", "cbz") == "cbr":
+        with rarfile.RarFile(source_path, "r") as archive:
+            return archive.read(archive_name)
+
+    with ZipFile(source_path, "r") as archive:
+        return archive.read(archive_name)
 
 def load_page_image(page):
     """

@@ -2,3 +2,4 @@ PySide6
 Pillow
 pytest
 pytest-qt
+rarfile

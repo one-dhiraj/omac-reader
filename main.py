@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QAction
 from PySide6.QtCore import Qt
 
-from app.archive import load_cbz, save_cbz
+from app.archive import load_comic, save_cbz
 from app.reader import ComicReader
 from app.editor import PageEditor
 
@@ -139,7 +139,7 @@ class MainWindow(QMainWindow):
             self,
             "Open Comic",
             "",
-            "CBZ Archives (*.cbz);;All Files (*)",
+            "Comic Files (*.cbz *.cbr);;CBZ Files (*.cbz);;CBR Files (*.cbr);;All Files (*)",
         )
 
         if not file_path:
@@ -147,7 +147,7 @@ class MainWindow(QMainWindow):
 
         # Load first, so an invalid archive cannot replace the current comic.
         try:
-            loaded_pages = load_cbz(file_path)
+            loaded_pages = load_comic(file_path)
         except (OSError, ValueError) as exc:
             QMessageBox.critical(
                 self,
