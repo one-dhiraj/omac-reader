@@ -25,3 +25,10 @@ venv/
 *.cbz
 *.cbr
 tests/note.txt
+
+# build files
+AppDir
+build
+dist
+release
+*.spec
