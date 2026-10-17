@@ -19,6 +19,7 @@ from app.archive import (
     load_comic,
     save_cbz,
     SaveCancelledError,
+    cbr_extraction_available
 )
 from app.reader import ComicReader
 from app.editor import PageEditor
@@ -168,14 +169,41 @@ class MainWindow(QMainWindow):
                 return
 
     def open_comic(self):
+        cbr_supported = cbr_extraction_available()
+
+        if cbr_supported:
+            file_filter = (
+                "Comic Files (*.cbz *.cbr);;"
+                "CBZ Files (*.cbz);;"
+                "CBR Files (*.cbr);;"
+                "All Files (*)"
+            )
+        else:
+            file_filter = (
+                "CBZ Files (*.cbz);;"
+                "All Files (*)"
+            )
+
         file_path, _ = QFileDialog.getOpenFileName(
             self,
             "Open Comic",
             "",
-            "Comic Files (*.cbz *.cbr);;CBZ Files (*.cbz);;CBR Files (*.cbr);;All Files (*)",
+            file_filter,
         )
 
         if not file_path:
+            return
+
+        if Path(file_path).suffix.lower() == ".cbr" and not cbr_supported:
+            QMessageBox.warning(
+                self,
+                "CBR Support Unavailable",
+                "OMAC Reader cannot open CBR files because no compatible "
+                "RAR extraction utility was found.\n\n"
+                "Install a supported utility, such as unar or unrar, "
+                "and restart OMAC Reader.\n\n"
+                "CBZ files can still be opened normally.",
+            )
             return
 
         # Load first, so an invalid archive cannot replace the current comic.

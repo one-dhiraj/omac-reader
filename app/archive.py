@@ -19,13 +19,21 @@ SUPPORTED_IMAGES = {
 class SaveCancelledError(Exception):
     """Raised when the user cancels a comic save operation."""
 
+def cbr_extraction_available():
+    """Return whether a compatible RAR extraction tool is available."""
+    try:
+        rarfile.tool_setup()
+    except rarfile.RarCannotExec:
+        return False
+
+    return True
+
 def natural_sort_key(path):
     """Sort page1, page2, page10 in human reading order."""
     return [
         int(part) if part.isdigit() else part.lower()
         for part in re.split(r"(\d+)", path)
     ]
-
 
 def load_cbz(file_path):
     """
