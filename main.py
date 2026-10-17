@@ -7,12 +7,14 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QProgressDialog,
+    QSizePolicy,
     QStackedWidget,
     QToolBar,
+    QToolButton,
+    QWidget
 )
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QAction, QIcon
 from PySide6.QtCore import Qt
-
 from app.archive import (
     load_comic,
     save_cbz,
@@ -20,14 +22,20 @@ from app.archive import (
 )
 from app.reader import ComicReader
 from app.editor import PageEditor
-
+from app.style import apply_app_style
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
 
+        icon_path = (
+            Path(__file__).resolve().parent
+            / "assets"
+            / "omac-reader.png"
+        )
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
         self.setWindowTitle("OMAC Reader")
-        self.resize(1100, 750)
+        self.setWindowIcon(QIcon(str(icon_path)))
 
         self.current_file = None
         self.comic_pages = []
@@ -37,7 +45,6 @@ class MainWindow(QMainWindow):
         self.create_actions()
         self.create_views()
         self.create_toolbar()
-        self.create_menu()
 
         self.statusBar().showMessage("Ready")
     
@@ -67,10 +74,12 @@ class MainWindow(QMainWindow):
     def create_actions(self):
         self.open_action = QAction("Open Comic", self)
         self.open_action.setShortcut("Ctrl+O")
+        self.open_action.setToolTip("Ctrl+O")
         self.open_action.triggered.connect(self.open_comic)
 
         self.reader_action = QAction("Reader", self)
         self.reader_action.setShortcut("Alt+R")
+        self.reader_action.setToolTip("Alt+R")
         self.reader_action.setCheckable(True)
         self.reader_action.setChecked(True)
         self.reader_action.triggered.connect(
@@ -79,6 +88,7 @@ class MainWindow(QMainWindow):
 
         self.editor_action = QAction("Page Editor", self)
         self.editor_action.setShortcut("Alt+E")
+        self.editor_action.setToolTip("Alt+E")
         self.editor_action.setCheckable(True)
         self.editor_action.triggered.connect(
             lambda: self.switch_mode(1)
@@ -86,6 +96,7 @@ class MainWindow(QMainWindow):
 
         self.save_as_action = QAction("Save As...", self)
         self.save_as_action.setShortcut("Ctrl+Shift+S")
+        self.save_as_action.setToolTip("Ctrl+Shift+S")
         self.save_as_action.triggered.connect(self.save_comic_as)
         self.save_as_action.setEnabled(False)
 
@@ -108,22 +119,36 @@ class MainWindow(QMainWindow):
     def create_toolbar(self):
         toolbar = QToolBar("Main Toolbar", self)
         toolbar.setMovable(False)
+        toolbar.setFloatable(False)
+        toolbar.setToolButtonStyle(
+            Qt.ToolButtonStyle.ToolButtonTextOnly
+        )
+        toolbar.setContextMenuPolicy(
+            Qt.ContextMenuPolicy.PreventContextMenu
+        )
         self.addToolBar(toolbar)
 
         toolbar.addAction(self.open_action)
+        toolbar.addAction(self.save_as_action)
         toolbar.addSeparator()
         toolbar.addAction(self.reader_action)
         toolbar.addAction(self.editor_action)
-
-    def create_menu(self):
-        file_menu = self.menuBar().addMenu("File")
-        file_menu.addAction(self.open_action)
-        file_menu.addSeparator()
-        file_menu.addAction(self.save_as_action)
-
-        view_menu = self.menuBar().addMenu("View")
-        view_menu.addAction(self.reader_action)
-        view_menu.addAction(self.editor_action)
+        
+        # Add an expanding spacer to push everything following it to the right side
+        spacer = QWidget()
+        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        toolbar.addWidget(spacer)
+        
+        # Create the close button
+        self.close_btn = QToolButton(self)
+        self.close_btn.setObjectName("toolbar_close_button") # Target object name for QSS styling
+        self.close_btn.setText("✕")                           # Clean text cross symbol
+        self.close_btn.setToolTip("Close Application")
+        
+        # Connect click to the window's close slot
+        self.close_btn.clicked.connect(self.close)
+        
+        toolbar.addWidget(self.close_btn)
     
     def switch_mode(self, index):
         self.pages_view.setCurrentIndex(index)
@@ -139,9 +164,7 @@ class MainWindow(QMainWindow):
             self.editor_loaded = self.editor.set_pages(self.comic_pages)
 
             if not self.editor_loaded:
-                self.pages_view.setCurrentIndex(0)
-                self.reader_action.setChecked(True)
-                self.editor_action.setChecked(False)
+                self.switch_mode(0)
                 return
 
     def open_comic(self):
@@ -221,7 +244,7 @@ class MainWindow(QMainWindow):
         )
 
         marker = " *" if unsaved else ""
-        self.setWindowTitle(f"OMAC Reader — {filename}{marker}")
+        # self.setWindowTitle(f"OMAC Reader — {filename}{marker}")
 
     def confirm_unsaved_changes(self):
         if not self.has_unsaved_changes:
@@ -254,6 +277,14 @@ class MainWindow(QMainWindow):
                 "Open a comic before saving.",
             )
             return False
+
+        if self.has_unsaved_changes == False:
+                    QMessageBox.warning(
+                        self,
+                        "Nothing to Save",
+                        "Make some changes before saving.",
+                    )
+                    return False
 
         if self.current_file:
             default_name = (
@@ -347,10 +378,17 @@ class MainWindow(QMainWindow):
 def main():
     app = QApplication(sys.argv)
     app.setApplicationName("OMAC Reader")
-    app.setStyle("Fusion")
+    app.setDesktopFileName("omac-reader")
+    apply_app_style(app)
+    icon_path = (
+        Path(__file__).resolve().parent
+        / "assets"
+        / "omac-reader.png"
+    )
+    app.setWindowIcon(QIcon(str(icon_path)))
 
     window = MainWindow()
-    window.show()
+    window.showMaximized()
 
     sys.exit(app.exec())
 

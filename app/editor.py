@@ -12,17 +12,17 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QAbstractItemView,
     QVBoxLayout,
+    QHBoxLayout,
     QPushButton,
     QMessageBox,
     QFileDialog,
-    QApplication, QProgressDialog
+    QProgressDialog
 )
 
 from pathlib import Path
 from PIL import Image
 
 from app.archive import load_page_thumbnail
-from app.archive import load_page_image
 
 class ReorderableListWidget(QListWidget):
     items_reordered = Signal()
@@ -117,8 +117,9 @@ class PageEditor(QWidget):
         self.pages = []
         self.thumbnail_cache = {}
 
-        title = QLabel("Page Editor")
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.page_info_label = QLabel("0 pages · 0 selected")
+        self.page_info_label.setObjectName("page_info_label")
+        self.page_info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         self.page_grid = ReorderableListWidget()
         self.page_grid.setViewMode(QListWidget.ViewMode.IconMode)
@@ -138,18 +139,38 @@ class PageEditor(QWidget):
         self.page_grid.items_reordered.connect(
             self._on_rows_moved
         )
+        self.page_grid.itemSelectionChanged.connect(
+            self._update_editor_status
+        )
 
         self.remove_button = QPushButton("Remove Selected Pages")
         self.remove_button.clicked.connect(self.remove_selected_pages)
+        self.remove_button.setEnabled(False)
 
         self.add_button = QPushButton("Add Pages")
         self.add_button.clicked.connect(self.add_pages)
 
+        button_layout = QHBoxLayout()
+        button_layout.addWidget(self.page_info_label)
+        button_layout.addStretch()
+        button_layout.addWidget(self.add_button)
+        button_layout.addWidget(self.remove_button)
+
         layout = QVBoxLayout(self)
-        layout.addWidget(title)
-        layout.addWidget(self.add_button)
-        layout.addWidget(self.remove_button)
+        layout.addLayout(button_layout)
         layout.addWidget(self.page_grid)
+
+    def _update_editor_status(self):
+        page_count = len(self.pages)
+        selected_count = len(self.page_grid.selectedItems())
+
+        page_text = "page" if page_count == 1 else "pages"
+
+        self.page_info_label.setText(
+            f"{page_count} {page_text} · {selected_count} selected"
+        )
+
+        self.remove_button.setEnabled(selected_count > 0)
 
     def set_pages(self, pages):
         self.pages = pages
@@ -207,7 +228,7 @@ class PageEditor(QWidget):
                 len(self.pages),
                 self,
             )
-            progress.setWindowTitle("Opening Page Editor")
+            progress.setWindowTitle("Opening Editor")
             progress.setWindowModality(
                 Qt.WindowModality.WindowModal
             )
@@ -242,6 +263,7 @@ class PageEditor(QWidget):
             for item in items:
                 self.page_grid.addItem(item)
 
+            self._update_editor_status()
             return True
 
         finally:
@@ -275,6 +297,7 @@ class PageEditor(QWidget):
             self.thumbnail_cache.pop(id(page), None)
 
         self._update_page_labels()
+        self._update_editor_status()
         self.pages_reordered.emit(self.pages.copy())
 
     
@@ -303,6 +326,9 @@ class PageEditor(QWidget):
         )
         progress.setWindowTitle("Adding Pages")
         progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setWindowFlag(
+            Qt.WindowType.WindowCloseButtonHint, False
+        )
         progress.setMinimumDuration(0)
         progress.setAutoClose(False)
         progress.setAutoReset(False)
@@ -381,6 +407,7 @@ class PageEditor(QWidget):
             self.page_grid.addItem(item)
 
         self._update_page_labels()
+        self._update_editor_status()
 
         # Notify main.py that the page list has changed.
         self.pages_reordered.emit(self.pages.copy())
